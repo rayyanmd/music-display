@@ -12,13 +12,14 @@ public struct SendPlanner {
   public static let stateIntervalMs: UInt64 = 5000
   public static let seekToleranceMs: Int64 = 2000
 
-  private let chunk: Int
+  /// Art payload bytes per BLE write; set from the live connection before resendAll.
+  public var chunk: Int
   private var current: SpotifySnapshot?  // last known track; playing=false once stopped
   private var stopped = false
   private var basePosMs: UInt32 = 0
   private var baseAtMs: UInt64 = 0
   private var lastStateMs: UInt64 = 0
-  private var art: [Data]?  // art messages for current.uri
+  private var artJpeg: Data?  // processed art for current.uri
 
   public init(chunk: Int) { self.chunk = chunk }
 
@@ -34,7 +35,7 @@ public struct SendPlanner {
     stopped = false
     guard let cur = current, cur.uri == snap.uri else {
       current = snap
-      art = nil
+      artJpeg = nil
       setBase(snap.positionMs, nowMs)
       return [metaMessage(snap), stateMessage(nowMs: nowMs)]
     }
@@ -50,7 +51,7 @@ public struct SendPlanner {
   public mutating func artReady(uri: String, jpeg: Data) -> [Outgoing] {
     guard let cur = current, cur.uri == uri,
           let msgs = Wire.artMessages(trackId: Wire.trackId(uri), jpeg: jpeg, chunk: chunk) else { return [] }
-    art = msgs
+    artJpeg = jpeg
     return [.art(msgs)]
   }
 
@@ -62,7 +63,9 @@ public struct SendPlanner {
   public mutating func resendAll(nowMs: UInt64) -> [Outgoing] {
     guard let cur = current else { return [] }
     var out: [Outgoing] = [metaMessage(cur)]
-    if let art { out.append(.art(art)) }
+    if let artJpeg, let msgs = Wire.artMessages(trackId: Wire.trackId(cur.uri), jpeg: artJpeg, chunk: chunk) {
+      out.append(.art(msgs))
+    }
     out.append(stateMessage(nowMs: nowMs))
     return out
   }
