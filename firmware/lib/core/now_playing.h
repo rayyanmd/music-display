@@ -1,6 +1,7 @@
 // Per-source now-playing state and arbitration. Not thread-safe: callers hold a lock.
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include "protocol.h"
@@ -17,7 +18,8 @@ struct Snapshot {
   Track track;
   bool playing = false;
   uint32_t positionMs = 0;                     // interpolated, clamped to duration
-  const std::vector<uint8_t>* art = nullptr;   // complete JPEG for track.id, else nullptr
+  // Complete JPEG for track.id, else null. Shared ownership: stays valid after the model changes.
+  std::shared_ptr<const std::vector<uint8_t>> art;
   uint32_t artVersion = 0;                     // changes whenever the shown art changes (0 = none)
   uint8_t connected = 0;
 };
@@ -41,11 +43,15 @@ class NowPlaying {
     uint16_t conn = kFree;
     bool hasState = false;
     proto::State state;
-    proto::Meta meta;
+    proto::Meta meta;         // for state.trackId (shown)
+    proto::Meta pendingMeta;  // for an upcoming track, promoted when its State arrives
     proto::ArtAssembler assembler;
     uint32_t artId = 0;
-    std::vector<uint8_t> art;  // last complete image
+    std::shared_ptr<const std::vector<uint8_t>> art;  // shown image
     uint32_t artSeq = 0;
+    uint32_t pendingArtId = 0;
+    std::shared_ptr<const std::vector<uint8_t>> pendingArt;
+    uint32_t pendingArtSeq = 0;
     uint32_t receivedAtMs = 0;
   };
   Slot slots_[kSlots];

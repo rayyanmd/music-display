@@ -105,7 +105,7 @@ void test_disconnect_active_falls_back() {
   TEST_ASSERT_EQUAL(PHONE, np.activeConn());
   Snapshot s = np.snapshot(200);
   TEST_ASSERT_TRUE(s.hasActive);
-  TEST_ASSERT_NULL(s.art);
+  TEST_ASSERT_TRUE(s.art == nullptr);
   np.onDisconnect(PHONE);
   s = np.snapshot(300);
   TEST_ASSERT_FALSE(s.hasActive);
@@ -132,14 +132,70 @@ void test_meta_and_art_only_shown_for_matching_track() {
   np.onMeta(MAC, m);
   sendArt(np, MAC, 7, 300);
   Snapshot a = np.snapshot(10);
-  TEST_ASSERT_NULL(a.art);
+  TEST_ASSERT_TRUE(a.art == nullptr);
   TEST_ASSERT_EQUAL_STRING("", a.track.title.c_str());
   np.onState(MAC, st(7, true, true, Source::Mac), 20);
   Snapshot b = np.snapshot(30);
-  TEST_ASSERT_NOT_NULL(b.art);
+  TEST_ASSERT_TRUE(b.art != nullptr);
   TEST_ASSERT_EQUAL(300, (int)b.art->size());
   TEST_ASSERT_EQUAL_STRING("Seven", b.track.title.c_str());
   TEST_ASSERT_TRUE(a.artVersion != b.artVersion);
+}
+
+
+void test_snapshot_art_outlives_disconnect() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  sendArt(np, MAC, 7, 300);
+  Snapshot s = np.snapshot(10);
+  TEST_ASSERT_TRUE(s.art != nullptr);
+  np.onDisconnect(MAC);  // BLE task frees the slot while the UI still decodes s.art
+  TEST_ASSERT_EQUAL(300, (int)s.art->size());
+  TEST_ASSERT_EQUAL_UINT8(299 & 0xFF, (*s.art)[299]);
+}
+
+void test_remote_duplicate_never_displaces_paused_local() {
+  NowPlaying np;
+  np.onConnect(PHONE);
+  np.onConnect(MAC);
+  np.onState(PHONE, st(7, true, true, Source::Phone), 0);
+  np.onState(PHONE, st(7, false, true, Source::Phone), 10000);
+  np.onState(MAC, st(7, false, false, Source::Mac), 10010);
+  np.onState(MAC, st(7, true, false, Source::Mac), 20000);  // Mac remote-controls, resumes first
+  TEST_ASSERT_EQUAL(PHONE, np.activeConn());
+  np.onState(PHONE, st(7, true, true, Source::Phone), 20080);
+  TEST_ASSERT_EQUAL(PHONE, np.activeConn());
+  np.onState(PHONE, st(7, true, true, Source::Phone), 25080);
+  TEST_ASSERT_EQUAL(PHONE, np.activeConn());
+}
+
+void test_state_newer_than_snapshot_time_does_not_jump() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac, 30000, 200000), 5001);
+  TEST_ASSERT_EQUAL_UINT32(30000, np.snapshot(5000).positionMs);
+}
+
+void test_old_track_stays_shown_until_new_state() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(1, true, true, Source::Mac), 0);
+  Meta a; a.trackId = 1; a.title = "Old";
+  np.onMeta(MAC, a);
+  sendArt(np, MAC, 1, 100);
+  Meta b; b.trackId = 2; b.title = "New";
+  np.onMeta(MAC, b);
+  sendArt(np, MAC, 2, 200);
+  Snapshot s = np.snapshot(50);
+  TEST_ASSERT_EQUAL_STRING("Old", s.track.title.c_str());
+  TEST_ASSERT_TRUE(s.art != nullptr);
+  TEST_ASSERT_EQUAL(100, (int)s.art->size());
+  np.onState(MAC, st(2, true, true, Source::Mac), 60);
+  s = np.snapshot(70);
+  TEST_ASSERT_EQUAL_STRING("New", s.track.title.c_str());
+  TEST_ASSERT_TRUE(s.art != nullptr);
+  TEST_ASSERT_EQUAL(200, (int)s.art->size());
 }
 
 int main() {
@@ -152,5 +208,9 @@ int main() {
   RUN_TEST(test_disconnect_active_falls_back);
   RUN_TEST(test_progress_clamps_and_freezes);
   RUN_TEST(test_meta_and_art_only_shown_for_matching_track);
+  RUN_TEST(test_snapshot_art_outlives_disconnect);
+  RUN_TEST(test_remote_duplicate_never_displaces_paused_local);
+  RUN_TEST(test_state_newer_than_snapshot_time_does_not_jump);
+  RUN_TEST(test_old_track_stays_shown_until_new_state);
   return UNITY_END();
 }
