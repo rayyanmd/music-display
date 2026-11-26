@@ -4,6 +4,8 @@
 #include "LGFX_ES3C28P.hpp"
 #include "layout.h"
 #include "now_playing.h"
+#include "tap_detector.h"
+#include "ble_service.h"
 #include "ui.h"
 #if DEMO
 #include "demo_art.h"
@@ -14,6 +16,7 @@ static constexpr int PIN_AUDIO_EN = 1;  // low = speaker amp on; keep off
 LGFX tft;
 Ui ui;
 NowPlaying model;
+BleService ble;
 std::mutex modelLock;
 
 #if DEMO
@@ -55,14 +58,11 @@ static void loadDemo() {
 }
 #endif
 
-static layout::Button pollTap() {
-  static bool wasDown = false;
+static layout::Button pollTap(uint32_t now) {
+  static TapDetector tap;
   int32_t x, y;
   bool down = tft.getTouch(&x, &y);
-  layout::Button b = layout::Button::None;
-  if (down && !wasDown) b = layout::hitTest(x, y);
-  wasDown = down;
-  return b;
+  return tap.update(down, now) ? layout::hitTest(x, y) : layout::Button::None;
 }
 
 void setup() {
@@ -75,12 +75,22 @@ void setup() {
   ui.begin(tft);
 #if DEMO
   loadDemo();
+#else
+  ble.begin(model, modelLock);
 #endif
+}
+
+static proto::Cmd toCmd(layout::Button b) {
+  switch (b) {
+    case layout::Button::Prev: return proto::Cmd::Prev;
+    case layout::Button::Next: return proto::Cmd::Next;
+    default: return proto::Cmd::PlayPause;
+  }
 }
 
 void loop() {
   uint32_t now = millis();
-  layout::Button b = pollTap();
+  layout::Button b = pollTap(now);
   if (b != layout::Button::None) {
     Serial.printf("tap %d\n", static_cast<int>(b));
     ui.flashButton(b);
@@ -97,6 +107,13 @@ void loop() {
       st.durationMs = s.track.durationMs;
       model.onState(1, st, now);
     }
+#else
+    int conn;
+    {
+      std::lock_guard<std::mutex> g(modelLock);
+      conn = model.activeConn();
+    }
+    if (conn >= 0) ble.sendCommand(conn, toCmd(b));
 #endif
   }
   Snapshot snap;
