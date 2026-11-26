@@ -13,15 +13,7 @@ import HelperCore
   private var pollTimer: Timer?
   private var observers: [NSObjectProtocol] = []
 
-  private static let queryScript = NSAppleScript(source: """
-    tell application "Spotify"
-      set s to player state as string
-      if s is "stopped" then return "stopped"
-      set t to current track
-      set sep to character id 30
-      return s & sep & (id of t) & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & ((duration of t) as string) & sep & ((player position) as string) & sep & (artwork url of t)
-    end tell
-    """)
+  private static let queryScript = NSAppleScript(source: SpotifyScripts.query)
 
   var isRunning: Bool {
     !NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleId).isEmpty
@@ -68,14 +60,8 @@ import HelperCore
 
   func send(_ c: DisplayCommand) {
     guard isRunning else { return }
-    let verb: String
-    switch c {
-    case .playPause: verb = "playpause"
-    case .next: verb = "next track"
-    case .prev: verb = "previous track"
-    }
     var err: NSDictionary?
-    NSAppleScript(source: "tell application \"Spotify\" to \(verb)")?.executeAndReturnError(&err)
+    NSAppleScript(source: SpotifyScripts.command(c))?.executeAndReturnError(&err)
     if let err { NSLog("MusicDisplay: command failed: \(err)") }
     refresh(fallback: nil)
   }

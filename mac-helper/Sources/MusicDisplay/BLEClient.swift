@@ -22,12 +22,7 @@ import HelperCore
   private var chars: [CBUUID: CBCharacteristic] = [:]
   private var ready = false
 
-  private enum Kind { case meta, artHeader, artData, state }
-  private struct Write {
-    let kind: Kind
-    let data: Data
-  }
-  private var queue: [Write] = []
+  private var queue = WriteQueue()
   private var awaitingResponse = false
   private var scanStartedAt = Date.distantPast
 
@@ -42,20 +37,7 @@ import HelperCore
   }
 
   func send(_ msgs: [Outgoing]) {
-    for m in msgs {
-      switch m {
-      case .meta(let d):
-        queue.removeAll { $0.kind == .artHeader || $0.kind == .artData }  // stale art for an older track
-        queue.append(Write(kind: .meta, data: d))
-      case .art(let parts):
-        guard let header = parts.first else { continue }
-        queue.append(Write(kind: .artHeader, data: header))
-        queue.append(contentsOf: parts.dropFirst().map { Write(kind: .artData, data: $0) })
-      case .state(let d):
-        queue.removeAll { $0.kind == .state }  // only the newest state matters
-        queue.append(Write(kind: .state, data: d))
-      }
-    }
+    queue.push(msgs, connected: ready)  // dropped while disconnected; onReady resends the current track
     drain()
   }
 
@@ -90,7 +72,7 @@ import HelperCore
     chars = [:]
     ready = false
     awaitingResponse = false
-    queue.removeAll()
+    queue.clear()
   }
 }
 
