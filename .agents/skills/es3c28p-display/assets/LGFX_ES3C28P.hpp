@@ -81,7 +81,7 @@ class LGFX : public lgfx::LGFX_Device {
       cfg.pin_int = 17;
       cfg.pin_rst = 18;
       cfg.bus_shared = false;
-      cfg.offset_rotation = 0;
+      cfg.offset_rotation = 2;  // touch panel is mounted 180 deg from the LCD (verified on hardware)
       cfg.i2c_port = 1;
       cfg.i2c_addr = 0x38;
       cfg.pin_sda = 16;
