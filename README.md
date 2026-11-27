@@ -6,6 +6,11 @@ A small wireless "now playing" screen for Spotify. An ESP32-S3 board with a 2.8"
 - synced lyrics
 - touch buttons for ⏮ ⏯ ⏭
 
+<p align="center">
+  <img src="docs/images/now-playing.jpeg" alt="Now-playing screen with album art, title, artist, progress bar and playback buttons" width="49%">
+  <img src="docs/images/lyrics.jpeg" alt="Lyrics screen showing synced lyrics with the current line highlighted" width="49%">
+</p>
+
 Everything travels over **Bluetooth LE**, so the display needs no Wi-Fi and no Spotify login. A small helper app on each device reads Spotify and sends the data to the display.
 
 ```
