@@ -21,6 +21,7 @@ public enum Wire {
   public static let maxArt = 32768
   public static let maxLyrics = 16384
   public static let maxLyricLine = 200
+  public static let maxLyricLines = 1000
 
   /// FNV-1a 32-bit over the URI's UTF-8 bytes.
   public static func trackId(_ uri: String) -> UInt32 {
@@ -73,13 +74,13 @@ public enum Wire {
   }
 
   /// Lyrics header (`0x01, id, total, kind`) followed by data chunks of at most `chunk` bytes.
-  /// Lines are cut to 200 bytes; whole lines are dropped from the end to keep the body <= 16384.
+  /// At most 1000 lines, each cut to 200 bytes; whole lines are dropped from the end to keep the body <= 16384.
   /// Kinds none/instrumental (or a body that ends up empty) send the header only, as kind none.
   public static func lyricsMessages(trackId: UInt32, result: LyricsResult, chunk: Int) -> [Data] {
     var kind = result.kind
     var body = Data()
     if kind == .synced || kind == .plain {
-      for line in result.lines {
+      for line in result.lines.prefix(maxLyricLines) {
         let text = truncatedUTF8(line.text, max: maxLyricLine)
         guard body.count + 5 + text.count <= maxLyrics else { break }
         body.appendLE(kind == .plain ? 0 : line.timeMs)

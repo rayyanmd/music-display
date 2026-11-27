@@ -63,9 +63,10 @@ struct Lyrics {
   std::vector<LyricLine> lines;
 };
 
-constexpr size_t kMaxLyrics = 16384, kMaxLyricLine = 200;
+constexpr size_t kMaxLyrics = 16384, kMaxLyricLine = 200, kMaxLyricLines = 1000;
 
-// Body: repeated {u32 time_ms, u8 len, len bytes}. False on overrun, len > 200 or decreasing times.
+// Body: repeated {u32 time_ms, u8 len, len bytes}. False (and out cleared) on overrun, len > 200,
+// more than 1000 lines or decreasing times.
 bool decodeLyricsBody(const uint8_t* d, size_t n, std::vector<LyricLine>& out);
 
 class LyricsAssembler {

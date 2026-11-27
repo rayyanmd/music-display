@@ -161,3 +161,47 @@ private func hit(_ artist: String, _ dur: Double, synced: Bool = true, plain: Bo
   #expect(body[4] == 200)
   #expect(String(bytes: body[5...], encoding: .utf8) != nil)
 }
+
+// MARK: lookup gate
+
+private func fetch(_ g: inout LyricsGate, uri: String, title: String, artist: String, nowMs: UInt64) -> Bool {
+  g.shouldFetch(uri: uri, title: title, artist: artist, nowMs: nowMs)
+}
+
+@Test func gateSkipsBlankNames() {
+  var g = LyricsGate()
+  #expect(fetch(&g, uri: "u", title: "", artist: "A", nowMs: 0) == false)
+  #expect(fetch(&g, uri: "u", title: "T", artist: "", nowMs: 0) == false)
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 0) == true)  // names filled in later
+}
+
+@Test func gateFetchesOncePerTrack() {
+  var g = LyricsGate()
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 0) == true)
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 100) == false)
+  g.finished(uri: "u", success: true, nowMs: 200)
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 999_999) == false)
+}
+
+@Test func gateRetriesFailureAfterBackoff() {
+  var g = LyricsGate()
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 0) == true)
+  g.finished(uri: "u", success: false, nowMs: 1000)
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 1000 + LyricsGate.retryAfterMs - 1) == false)
+  #expect(fetch(&g, uri: "u", title: "T", artist: "A", nowMs: 1000 + LyricsGate.retryAfterMs) == true)
+}
+
+@Test func gateNewTrackAlwaysFetches() {
+  var g = LyricsGate()
+  #expect(fetch(&g, uri: "a", title: "T", artist: "A", nowMs: 0) == true)
+  g.finished(uri: "a", success: false, nowMs: 10)
+  #expect(fetch(&g, uri: "b", title: "T", artist: "A", nowMs: 20) == true)
+  g.finished(uri: "a", success: false, nowMs: 30)  // late result for an old track changes nothing
+  #expect(fetch(&g, uri: "b", title: "T", artist: "A", nowMs: 40) == false)
+}
+
+@Test func lyricsEncoderCapsLineCount() {
+  let lines = (0..<1200).map { LyricLine(timeMs: UInt32($0), text: "") }
+  let m = Wire.lyricsMessages(trackId: 1, result: LyricsResult(kind: .synced, lines: lines), chunk: 500)
+  #expect(WriteQueue.u32(m[0], at: 5) == UInt32(Wire.maxLyricLines * 5))
+}

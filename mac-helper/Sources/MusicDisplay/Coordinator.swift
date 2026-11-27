@@ -17,7 +17,7 @@ import ServiceManagement
   private var artTask: Task<Void, Never>?
   private let lyricsFetcher = LyricsFetcher()
   private var lyricsTask: Task<Void, Never>?
-  private var lyricsURI: String?
+  private var lyricsGate = LyricsGate()
   private var lyricsCache: [String: LyricsResult] = [:]
   private var lyricsOrder: [String] = []
   private static let lyricsCacheSize = 50
@@ -51,8 +51,8 @@ import ServiceManagement
       nowPlaying = "\(snap.playing ? "▶" : "⏸") \(snap.title) — \(snap.artist)"
       if out.contains(where: { if case .meta = $0 { return true } else { return false } }) {
         fetchArt(for: snap)
-        fetchLyrics(for: snap)
       }
+      fetchLyrics(for: snap)
     } else {
       nowPlaying = "Spotify not playing"
     }
@@ -72,10 +72,11 @@ import ServiceManagement
     }
   }
 
-  /// Once per track: cached or fetched lyrics, sent after the art transfer has been queued.
+  /// Once per track (retried after a network failure): cached or fetched lyrics, sent after the art.
   private func fetchLyrics(for snap: SpotifySnapshot) {
-    guard snap.uri != lyricsURI else { return }  // Meta re-sent for the same track (names filled in late)
-    lyricsURI = snap.uri
+    guard lyricsGate.shouldFetch(uri: snap.uri, title: snap.title, artist: snap.artist, nowMs: Self.nowMs) else {
+      return
+    }
     lyricsTask?.cancel()
     let uri = snap.uri
     let art = artTask
@@ -87,7 +88,8 @@ import ServiceManagement
       await art?.value  // lyrics go after the art (or after its fetch failed)
       guard let self, !Task.isCancelled else { return }
       if let result, cached == nil { self.cacheLyrics(result, for: uri) }
-      if result == nil { NSLog("MusicDisplay: lyrics lookup failed (network); will retry next time this track plays") }
+      self.lyricsGate.finished(uri: uri, success: result != nil, nowMs: Self.nowMs)
+      if result == nil { NSLog("MusicDisplay: lyrics lookup failed (network); retrying in 30 s while it plays") }
       self.ble.send(self.planner.lyricsReady(uri: uri, result: result ?? LyricsResult.notFound))
     }
   }

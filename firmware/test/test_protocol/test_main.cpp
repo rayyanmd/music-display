@@ -266,6 +266,17 @@ void test_lyricsAssemblerGapAborts() {
   TEST_ASSERT_EQUAL(LyricsAssembler::Result::Ignored, a.feed(d0.data(), d0.size()));
 }
 
+void test_lyricsBodyRejectsTooManyLines() {
+  std::vector<uint8_t> b;
+  for (int i = 0; i < 1000; i++) putLine(b, 0, "");
+  std::vector<LyricLine> out;
+  TEST_ASSERT_TRUE(decodeLyricsBody(b.data(), b.size(), out));
+  TEST_ASSERT_EQUAL(1000, out.size());
+  putLine(b, 0, "");
+  TEST_ASSERT_FALSE(decodeLyricsBody(b.data(), b.size(), out));
+  TEST_ASSERT_EQUAL(0, out.size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_state_roundtrip);
@@ -288,5 +299,6 @@ int main() {
   RUN_TEST(test_lyricsHeaderRejectsOversize);
   RUN_TEST(test_lyricsHeaderRejectsBadKind);
   RUN_TEST(test_lyricsAssemblerGapAborts);
+  RUN_TEST(test_lyricsBodyRejectsTooManyLines);
   return UNITY_END();
 }

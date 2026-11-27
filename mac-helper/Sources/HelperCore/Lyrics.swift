@@ -194,3 +194,28 @@ public enum LyricsMatch {
     s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).trimmingCharacters(in: .whitespaces)
   }
 }
+
+/// Decides when to look up lyrics: once per track with names, and again after a failed lookup
+/// (network error) once `retryAfterMs` has passed, even if the same track keeps playing.
+public struct LyricsGate: Sendable {
+  public static let retryAfterMs: UInt64 = 30_000
+  private var uri: String?          // track whose lookup is running or done
+  private var retryAtMs: UInt64?    // set when that lookup failed
+
+  public init() {}
+
+  public mutating func shouldFetch(uri u: String, title: String, artist: String, nowMs: UInt64) -> Bool {
+    guard !title.isEmpty, !artist.isEmpty else { return false }  // LRCLIB can't match blank names
+    if u == uri {
+      guard let at = retryAtMs, nowMs >= at else { return false }
+    }
+    uri = u
+    retryAtMs = nil
+    return true
+  }
+
+  public mutating func finished(uri u: String, success: Bool, nowMs: UInt64) {
+    guard u == uri else { return }
+    retryAtMs = success ? nil : nowMs + Self.retryAfterMs
+  }
+}

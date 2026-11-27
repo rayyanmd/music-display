@@ -52,7 +52,7 @@ Helpers look for this characteristic after service discovery and skip lyrics if 
   - For kinds 0 and 3, `total_len` = 0 and no data follows. For kinds 1 and 2, 1 ≤ `total_len` ≤ 16384.
 - **Data**: `0x02, u32 track_id, u32 offset, bytes…`, contiguous from 0, with the same chunk size as Art. A wrong track_id or a gap aborts the transfer.
 - **Body**: repeated `u32 time_ms, u8 len, len bytes UTF-8`.
-  - `len` ≤ 200, and lines are cut on a UTF-8 boundary.
+  - `len` ≤ 200, and lines are cut on a UTF-8 boundary. At most 1000 lines.
   - `time_ms` is non-decreasing. For plain lyrics every `time_ms` = 0.
   - An empty line (len 0) is an instrumental gap and is shown as "♪".
   - A malformed body is dropped.

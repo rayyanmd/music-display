@@ -89,11 +89,17 @@ bool decodeLyricsBody(const uint8_t* d, size_t n, std::vector<LyricLine>& out) {
   size_t i = 0;
   uint32_t last = 0;
   while (i < n) {
-    if (n - i < 5) return false;
+    if (n - i < 5) {
+      out.clear();
+      return false;
+    }
     uint32_t t = rd32(d + i);
     size_t len = d[i + 4];
     i += 5;
-    if (len > kMaxLyricLine || len > n - i || t < last) return false;
+    if (len > kMaxLyricLine || len > n - i || t < last || out.size() >= kMaxLyricLines) {
+      out.clear();
+      return false;
+    }
     out.push_back(LyricLine{t, std::string(reinterpret_cast<const char*>(d + i), len)});
     last = t;
     i += len;
@@ -105,6 +111,7 @@ void LyricsAssembler::reset() {
   active_ = false;
   total_ = 0;
   buf_.clear();
+  buf_.shrink_to_fit();  // don't keep up to 16 KB per connection between transfers
 }
 
 LyricsAssembler::Result LyricsAssembler::feed(const uint8_t* d, size_t n) {
