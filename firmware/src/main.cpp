@@ -62,7 +62,7 @@ static layout::Button pollTap(uint32_t now) {
   static TapDetector tap;
   int32_t x, y;
   bool down = tft.getTouch(&x, &y);
-  return tap.update(down, now) ? layout::hitTest(x, y) : layout::Button::None;
+  return tap.update(down, now) ? layout::toButton(layout::hitTest(layout::View::Main, x, y)) : layout::Button::None;
 }
 
 void setup() {

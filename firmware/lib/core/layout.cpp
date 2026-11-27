@@ -5,9 +5,10 @@ namespace layout {
 namespace {
 struct Entry {
   Rect r;
-  Button b;
+  Action a;
 };
-constexpr Entry kButtons[] = {{kPrev, Button::Prev}, {kPlay, Button::PlayPause}, {kNext, Button::Next}};
+constexpr Entry kMainButtons[] = {{kPrev, Action::Prev}, {kPlay, Action::PlayPause}, {kNext, Action::Next}};
+constexpr Entry kLyricsButtons[] = {{kLPrev, Action::Prev}, {kLPlay, Action::PlayPause}, {kLNext, Action::Next}};
 
 // Distance from point to rect (0 inside), Chebyshev metric.
 int dist(const Rect& r, int x, int y) {
@@ -17,17 +18,29 @@ int dist(const Rect& r, int x, int y) {
 }
 }  // namespace
 
-Button hitTest(int x, int y) {
-  Button best = Button::None;
+Action hitTest(View v, int x, int y) {
+  const Entry* buttons = v == View::Main ? kMainButtons : kLyricsButtons;
+  Action best = Action::None;
   int bestD = kTouchSlop + 1;
-  for (const Entry& e : kButtons) {
-    int d = dist(e.r, x, y);
+  for (int i = 0; i < 3; i++) {
+    int d = dist(buttons[i].r, x, y);
     if (d < bestD) {
       bestD = d;
-      best = e.b;
+      best = buttons[i].a;
     }
   }
-  return best;
+  if (best != Action::None) return best;
+  const Rect& toggle = v == View::Main ? kArt : kLyrics;
+  return toggle.contains(x, y) ? Action::ToggleView : Action::None;
+}
+
+Button toButton(Action a) {
+  switch (a) {
+    case Action::Prev: return Button::Prev;
+    case Action::PlayPause: return Button::PlayPause;
+    case Action::Next: return Button::Next;
+    default: return Button::None;
+  }
 }
 
 std::string formatTime(uint32_t ms) {

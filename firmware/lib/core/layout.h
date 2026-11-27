@@ -22,9 +22,23 @@ constexpr Rect kPlay{225, 176, 40, 48};
 constexpr Rect kNext{272, 176, 40, 48};
 constexpr int kTouchSlop = 6;
 
-enum class Button { None, Prev, PlayPause, Next };
+// Lyrics view
+constexpr Rect kLyrics{8, 24, 304, 138};
+constexpr Rect kLProgress{8, 168, 304, 4};
+constexpr Rect kLInfo{8, 178, 160, 14};
+constexpr Rect kLTimes{8, 196, 160, 14};
+constexpr Rect kLPrev{178, 190, 40, 36};
+constexpr Rect kLPlay{225, 190, 40, 36};
+constexpr Rect kLNext{272, 190, 40, 36};
 
-Button hitTest(int x, int y);           // exact rect first, then nearest button within kTouchSlop
+enum class Button { None, Prev, PlayPause, Next };
+enum class View { Main, Lyrics };
+enum class Action { None, Prev, PlayPause, Next, ToggleView };
+
+// Buttons of the view first (exact, then nearest within kTouchSlop); then the view's toggle area
+// (kArt on Main, kLyrics on Lyrics).
+Action hitTest(View v, int x, int y);
+Button toButton(Action a);              // None for ToggleView/None
 std::string formatTime(uint32_t ms);    // "m:ss", or "h:mm:ss" at 1 h or more
 int progressWidth(uint32_t pos, uint32_t dur, int fullW);  // 0 if dur == 0, clamped to fullW
 }  // namespace layout
