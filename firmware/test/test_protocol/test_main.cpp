@@ -146,6 +146,137 @@ void test_art_new_header_restarts() {
   TEST_ASSERT_EQUAL(static_cast<int>(ArtAssembler::Result::Complete), static_cast<int>(a.feed(d8.data(), d8.size())));
 }
 
+// ---- lyrics (v1.1) ----
+static void putLine(std::vector<uint8_t>& v, uint32_t t, const std::string& s) {
+  put32(v, t);
+  v.push_back((uint8_t)s.size());
+  v.insert(v.end(), s.begin(), s.end());
+}
+
+static std::vector<uint8_t> lyrHeader(uint32_t id, uint32_t total, uint8_t kind) {
+  std::vector<uint8_t> v{0x01};
+  put32(v, id);
+  put32(v, total);
+  v.push_back(kind);
+  return v;
+}
+
+void test_lyricsBodyDecodesLines() {
+  std::vector<uint8_t> b;
+  putLine(b, 1000, "Hello");
+  putLine(b, 2500, "W\xC3\xB6rld");
+  std::vector<LyricLine> out;
+  TEST_ASSERT_TRUE(decodeLyricsBody(b.data(), b.size(), out));
+  TEST_ASSERT_EQUAL(2, out.size());
+  TEST_ASSERT_EQUAL_UINT32(1000, out[0].timeMs);
+  TEST_ASSERT_EQUAL_UINT32(2500, out[1].timeMs);
+  TEST_ASSERT_EQUAL_STRING("W\xC3\xB6rld", out[1].text.c_str());
+}
+
+void test_lyricsBodyEmptyLineAllowed() {
+  std::vector<uint8_t> b;
+  putLine(b, 0, "");
+  std::vector<LyricLine> out;
+  TEST_ASSERT_TRUE(decodeLyricsBody(b.data(), b.size(), out));
+  TEST_ASSERT_EQUAL(1, out.size());
+  TEST_ASSERT_EQUAL_STRING("", out[0].text.c_str());
+}
+
+void test_lyricsBodyRejectsOverrun() {
+  std::vector<uint8_t> b;
+  put32(b, 0);
+  b.push_back(10);
+  b.push_back('a'); b.push_back('b'); b.push_back('c');
+  std::vector<LyricLine> out;
+  TEST_ASSERT_FALSE(decodeLyricsBody(b.data(), b.size(), out));
+  std::vector<uint8_t> partial{1, 2};  // truncated time field
+  TEST_ASSERT_FALSE(decodeLyricsBody(partial.data(), partial.size(), out));
+}
+
+void test_lyricsBodyRejectsLongLine() {
+  std::vector<uint8_t> b;
+  put32(b, 0);
+  b.push_back(201);
+  b.insert(b.end(), 201, 'x');
+  std::vector<LyricLine> out;
+  TEST_ASSERT_FALSE(decodeLyricsBody(b.data(), b.size(), out));
+}
+
+void test_lyricsBodyRejectsDecreasingTimes() {
+  std::vector<uint8_t> b;
+  putLine(b, 2000, "a");
+  putLine(b, 1000, "b");
+  std::vector<LyricLine> out;
+  TEST_ASSERT_FALSE(decodeLyricsBody(b.data(), b.size(), out));
+}
+
+void test_lyricsAssemblerSyncedComplete() {
+  std::vector<uint8_t> body;
+  putLine(body, 1000, "one");
+  putLine(body, 2000, "two");
+  LyricsAssembler a;
+  auto h = lyrHeader(9, body.size(), 1);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::InProgress, a.feed(h.data(), h.size()));
+  size_t half = body.size() / 2;
+  auto d1 = artData(9, 0, body.data(), half);
+  auto d2 = artData(9, half, body.data() + half, body.size() - half);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::InProgress, a.feed(d1.data(), d1.size()));
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Complete, a.feed(d2.data(), d2.size()));
+  TEST_ASSERT_EQUAL(LyricsKind::Synced, a.kind());
+  TEST_ASSERT_EQUAL_UINT32(9, a.trackId());
+  TEST_ASSERT_EQUAL(body.size(), a.data().size());
+}
+
+void test_lyricsAssemblerNoneCompletesOnHeader() {
+  LyricsAssembler a;
+  auto h = lyrHeader(5, 0, 0);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Complete, a.feed(h.data(), h.size()));
+  TEST_ASSERT_EQUAL(LyricsKind::None, a.kind());
+  auto i = lyrHeader(5, 0, 3);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Complete, a.feed(i.data(), i.size()));
+  TEST_ASSERT_EQUAL(LyricsKind::Instrumental, a.kind());
+  auto bad = lyrHeader(5, 4, 0);  // kind none must have no body
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Error, a.feed(bad.data(), bad.size()));
+  auto empty = lyrHeader(5, 0, 1);  // synced must have a body
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Error, a.feed(empty.data(), empty.size()));
+}
+
+void test_lyricsHeaderRejectsOversize() {
+  LyricsAssembler a;
+  auto h = lyrHeader(1, 16385, 1);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Error, a.feed(h.data(), h.size()));
+  auto ok = lyrHeader(1, 16384, 1);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::InProgress, a.feed(ok.data(), ok.size()));
+}
+
+void test_lyricsHeaderRejectsBadKind() {
+  LyricsAssembler a;
+  auto h = lyrHeader(1, 10, 4);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Error, a.feed(h.data(), h.size()));
+}
+
+void test_lyricsAssemblerGapAborts() {
+  LyricsAssembler a;
+  uint8_t p[8] = {0};
+  auto h = lyrHeader(3, 16, 1);
+  a.feed(h.data(), h.size());
+  auto d = artData(3, 4, p, 8);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Error, a.feed(d.data(), d.size()));
+  auto d0 = artData(3, 0, p, 8);
+  TEST_ASSERT_EQUAL(LyricsAssembler::Result::Ignored, a.feed(d0.data(), d0.size()));
+}
+
+void test_lyricsBodyRejectsTooManyLines() {
+  std::vector<uint8_t> b;
+  for (int i = 0; i < 1000; i++) putLine(b, 0, "");
+  std::vector<LyricLine> out;
+  TEST_ASSERT_TRUE(decodeLyricsBody(b.data(), b.size(), out));
+  TEST_ASSERT_EQUAL(1000, out.size());
+  putLine(b, 0, "");
+  TEST_ASSERT_FALSE(decodeLyricsBody(b.data(), b.size(), out));
+  TEST_ASSERT_EQUAL(0, out.size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_state_roundtrip);
@@ -158,5 +289,16 @@ int main() {
   RUN_TEST(test_art_offset_gap_errors);
   RUN_TEST(test_art_too_large_errors);
   RUN_TEST(test_art_new_header_restarts);
+  RUN_TEST(test_lyricsBodyDecodesLines);
+  RUN_TEST(test_lyricsBodyEmptyLineAllowed);
+  RUN_TEST(test_lyricsBodyRejectsOverrun);
+  RUN_TEST(test_lyricsBodyRejectsLongLine);
+  RUN_TEST(test_lyricsBodyRejectsDecreasingTimes);
+  RUN_TEST(test_lyricsAssemblerSyncedComplete);
+  RUN_TEST(test_lyricsAssemblerNoneCompletesOnHeader);
+  RUN_TEST(test_lyricsHeaderRejectsOversize);
+  RUN_TEST(test_lyricsHeaderRejectsBadKind);
+  RUN_TEST(test_lyricsAssemblerGapAborts);
+  RUN_TEST(test_lyricsBodyRejectsTooManyLines);
   return UNITY_END();
 }

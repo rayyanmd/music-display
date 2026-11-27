@@ -1,4 +1,4 @@
-# Now-Playing BLE Protocol (v1)
+# Now-Playing BLE Protocol (v1.1)
 
 The display is a BLE **peripheral** and accepts up to 3 simultaneous **centrals** (helpers on the Mac or phone). All multi-byte integers are **little-endian**.
 
@@ -14,6 +14,7 @@ Advertised name: `NowPlaying-XXXX`, where XXXX is the last 2 bytes of the displa
 | Art | `6e0a0003-7b5d-4c1e-9f3a-2d8c5b1e4a70` | write without response |
 | Command | `6e0a0004-7b5d-4c1e-9f3a-2d8c5b1e4a70` | notify |
 | Info | `6e0a0005-7b5d-4c1e-9f3a-2d8c5b1e4a70` | read |
+| Lyrics (v1.1, optional) | `6e0a0006-7b5d-4c1e-9f3a-2d8c5b1e4a70` | write without response + write, ≤ 512 bytes per write |
 
 Helpers should request **MTU 517** (and 2M PHY where supported).
 
@@ -43,6 +44,19 @@ The image is a baseline (non-progressive) JPEG, ideally 160×160, quality about 
 - Data: `0x02, u32 track_id, u32 offset, bytes…`. Offsets must be contiguous from 0. Chunks are about 500 bytes of payload.
 
 The transfer is complete when the contiguous bytes received equal `total_len`. A wrong track_id or a gap aborts the transfer.
+
+## Lyrics (helper → display, chunked, v1.1, optional)
+Helpers look for this characteristic after service discovery and skip lyrics if it's missing (older firmware). Older helpers never write it, and the display then shows "No lyrics" 10 s after a track starts.
+- **Header**, written with response, exactly 10 bytes: `0x01, u32 track_id, u32 total_len, u8 kind`. It starts a new transfer and discards any partial one.
+  - `kind`: `0` none found, `1` synced, `2` plain (untimed), `3` instrumental.
+  - For kinds 0 and 3, `total_len` = 0 and no data follows. For kinds 1 and 2, 1 ≤ `total_len` ≤ 16384.
+- **Data**: `0x02, u32 track_id, u32 offset, bytes…`, contiguous from 0, with the same chunk size as Art. A wrong track_id or a gap aborts the transfer.
+- **Body**: repeated `u32 time_ms, u8 len, len bytes UTF-8`.
+  - `len` ≤ 200, and lines are cut on a UTF-8 boundary. At most 1000 lines.
+  - `time_ms` is non-decreasing. For plain lyrics every `time_ms` = 0.
+  - An empty line (len 0) is an instrumental gap and is shown as "♪".
+  - A malformed body is dropped.
+- **Ordering:** send after Art for the track. Lyrics for an upcoming track id are held by the display until that track's State arrives. On reconnect, send Meta, Art, Lyrics, then State.
 
 ## Command (display → helper, notify), 1 byte
 `0x01` play/pause · `0x02` next · `0x03` previous.

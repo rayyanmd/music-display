@@ -49,4 +49,42 @@ class ArtAssembler {
   std::vector<uint8_t> buf_;
 };
 
+// ---- Lyrics (v1.1) ----
+enum class LyricsKind : uint8_t { None = 0, Synced = 1, Plain = 2, Instrumental = 3 };
+
+struct LyricLine {
+  uint32_t timeMs = 0;
+  std::string text;
+};
+
+struct Lyrics {
+  uint32_t trackId = 0;
+  LyricsKind kind = LyricsKind::None;
+  std::vector<LyricLine> lines;
+};
+
+constexpr size_t kMaxLyrics = 16384, kMaxLyricLine = 200, kMaxLyricLines = 1000;
+
+// Body: repeated {u32 time_ms, u8 len, len bytes}. False (and out cleared) on overrun, len > 200,
+// more than 1000 lines or decreasing times.
+bool decodeLyricsBody(const uint8_t* d, size_t n, std::vector<LyricLine>& out);
+
+class LyricsAssembler {
+ public:
+  enum class Result { Ignored, InProgress, Complete, Error };
+  // Header: 0x01, u32 id, u32 total, u8 kind (exactly 10 bytes). Kinds 0/3 complete on the header.
+  Result feed(const uint8_t* d, size_t n);
+  uint32_t trackId() const { return trackId_; }
+  LyricsKind kind() const { return kind_; }
+  const std::vector<uint8_t>& data() const { return buf_; }
+  void reset();
+
+ private:
+  bool active_ = false;
+  uint32_t trackId_ = 0;
+  uint32_t total_ = 0;
+  LyricsKind kind_ = LyricsKind::None;
+  std::vector<uint8_t> buf_;
+};
+
 }  // namespace proto

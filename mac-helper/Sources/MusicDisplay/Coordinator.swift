@@ -15,6 +15,12 @@ import ServiceManagement
   private var planner = SendPlanner(chunk: 500)
   private var ticker: Timer?
   private var artTask: Task<Void, Never>?
+  private let lyricsFetcher = LyricsFetcher()
+  private var lyricsTask: Task<Void, Never>?
+  private var lyricsGate = LyricsGate()
+  private var lyricsCache: [String: LyricsResult] = [:]
+  private var lyricsOrder: [String] = []
+  private static let lyricsCacheSize = 50
 
   private static var nowMs: UInt64 { UInt64(ProcessInfo.processInfo.systemUptime * 1000) }
 
@@ -46,6 +52,7 @@ import ServiceManagement
       if out.contains(where: { if case .meta = $0 { return true } else { return false } }) {
         fetchArt(for: snap)
       }
+      fetchLyrics(for: snap)
     } else {
       nowPlaying = "Spotify not playing"
     }
@@ -63,6 +70,34 @@ import ServiceManagement
       guard let jpeg, let self, !Task.isCancelled else { return }
       self.ble.send(self.planner.artReady(uri: uri, jpeg: jpeg))
     }
+  }
+
+  /// Once per track (retried after a network failure): cached or fetched lyrics, sent after the art.
+  private func fetchLyrics(for snap: SpotifySnapshot) {
+    guard lyricsGate.shouldFetch(uri: snap.uri, title: snap.title, artist: snap.artist, nowMs: Self.nowMs) else {
+      return
+    }
+    lyricsTask?.cancel()
+    let uri = snap.uri
+    let art = artTask
+    let cached = lyricsCache[uri]
+    let fetcher = lyricsFetcher
+    lyricsTask = Task { [weak self] in
+      let result: LyricsResult?
+      if let cached { result = cached } else { result = await fetcher.fetch(snap) }
+      await art?.value  // lyrics go after the art (or after its fetch failed)
+      guard let self, !Task.isCancelled else { return }
+      if let result, cached == nil { self.cacheLyrics(result, for: uri) }
+      self.lyricsGate.finished(uri: uri, success: result != nil, nowMs: Self.nowMs)
+      if result == nil { NSLog("MusicDisplay: lyrics lookup failed (network); retrying in 30 s while it plays") }
+      self.ble.send(self.planner.lyricsReady(uri: uri, result: result ?? LyricsResult.notFound))
+    }
+  }
+
+  /// Only definite answers are cached; network failures are retried the next time the track plays.
+  private func cacheLyrics(_ r: LyricsResult, for uri: String) {
+    if lyricsCache.updateValue(r, forKey: uri) == nil { lyricsOrder.append(uri) }
+    while lyricsOrder.count > Self.lyricsCacheSize { lyricsCache[lyricsOrder.removeFirst()] = nil }
   }
 
   private func applyLaunchAtLogin() {

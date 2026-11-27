@@ -51,6 +51,8 @@ import HelperCore
       case .artHeader: (uuid, type) = (NP.art, .withResponse)
       case .artData: (uuid, type) = (NP.art, .withoutResponse)
       case .state: (uuid, type) = (NP.state, .withoutResponse)
+      case .lyricsHeader: (uuid, type) = (NP.lyrics, .withResponse)
+      case .lyricsData: (uuid, type) = (NP.lyrics, .withoutResponse)
       }
       guard let c = chars[CBUUID(string: uuid)] else { queue.removeFirst(); continue }
       if type == .withoutResponse && !p.canSendWriteWithoutResponse { return }  // resumes in peripheralIsReady

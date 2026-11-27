@@ -4,13 +4,14 @@ public enum Outgoing: Equatable, Sendable {
   case meta(Data)
   case art([Data])
   case state(Data)
+  case lyrics([Data])
 }
 
 /// Decides which protocol messages to send as Spotify's state changes.
 public struct SendPlanner {
   public static let source: UInt8 = 1  // mac
   public static let stateIntervalMs: UInt64 = 5000
-  public static let seekToleranceMs: Int64 = 2000
+  public static let seekToleranceMs: Int64 = 750
 
   /// Art payload bytes per BLE write; set from the live connection before resendAll.
   public var chunk: Int
@@ -20,6 +21,7 @@ public struct SendPlanner {
   private var baseAtMs: UInt64 = 0
   private var lastStateMs: UInt64 = 0
   private var artJpeg: Data?  // processed art for current.uri
+  private var lyrics: LyricsResult?  // lyrics result for current.uri
 
   public init(chunk: Int) { self.chunk = chunk }
 
@@ -36,6 +38,7 @@ public struct SendPlanner {
     guard let cur = current, cur.uri == snap.uri else {
       current = snap
       artJpeg = nil
+      lyrics = nil
       setBase(snap.positionMs, nowMs)
       return [metaMessage(snap), stateMessage(nowMs: nowMs)]
     }
@@ -55,6 +58,13 @@ public struct SendPlanner {
     return [.art(msgs)]
   }
 
+  /// Lyrics (any kind, including none) for `uri`; ignored unless it is the current track.
+  public mutating func lyricsReady(uri: String, result: LyricsResult) -> [Outgoing] {
+    guard let cur = current, cur.uri == uri else { return [] }
+    lyrics = result
+    return [.lyrics(Wire.lyricsMessages(trackId: Wire.trackId(uri), result: result, chunk: chunk))]
+  }
+
   public mutating func tick(nowMs: UInt64) -> [Outgoing] {
     guard let cur = current, cur.playing, nowMs - lastStateMs >= Self.stateIntervalMs else { return [] }
     return [stateMessage(nowMs: nowMs)]
@@ -65,6 +75,9 @@ public struct SendPlanner {
     var out: [Outgoing] = [metaMessage(cur)]
     if let artJpeg, let msgs = Wire.artMessages(trackId: Wire.trackId(cur.uri), jpeg: artJpeg, chunk: chunk) {
       out.append(.art(msgs))
+    }
+    if let lyrics {
+      out.append(.lyrics(Wire.lyricsMessages(trackId: Wire.trackId(cur.uri), result: lyrics, chunk: chunk)))
     }
     out.append(stateMessage(nowMs: nowMs))
     return out
