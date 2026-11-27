@@ -2,7 +2,7 @@ import Foundation
 
 /// Ordered BLE writes with the pruning rules the display relies on.
 public struct WriteQueue {
-  public enum Kind: Sendable { case meta, artHeader, artData, state }
+  public enum Kind: Sendable { case meta, artHeader, artData, state, lyricsHeader, lyricsData }
   public struct Item: Sendable {
     public let kind: Kind
     public let data: Data
@@ -23,13 +23,21 @@ public struct WriteQueue {
       switch m {
       case .meta(let d):
         let id = Self.u32(d, at: 0)
-        items.removeAll { ($0.kind == .artHeader || $0.kind == .artData) && $0.trackId != id }
+        // Art and lyrics queued for another track are stale once a new track's Meta is queued.
+        items.removeAll {
+          [.artHeader, .artData, .lyricsHeader, .lyricsData].contains($0.kind) && $0.trackId != id
+        }
         items.append(Item(kind: .meta, data: d, trackId: id))
       case .art(let parts):
         guard let header = parts.first else { continue }
         let id = Self.u32(header, at: 1)
         items.append(Item(kind: .artHeader, data: header, trackId: id))
         items.append(contentsOf: parts.dropFirst().map { Item(kind: .artData, data: $0, trackId: id) })
+      case .lyrics(let parts):
+        guard let header = parts.first else { continue }
+        let id = Self.u32(header, at: 1)
+        items.append(Item(kind: .lyricsHeader, data: header, trackId: id))
+        items.append(contentsOf: parts.dropFirst().map { Item(kind: .lyricsData, data: $0, trackId: id) })
       case .state(let d):
         items.removeAll { $0.kind == .state }  // only the newest state matters
         items.append(Item(kind: .state, data: d, trackId: Self.u32(d, at: 4)))

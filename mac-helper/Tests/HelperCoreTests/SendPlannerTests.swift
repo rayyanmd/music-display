@@ -19,6 +19,7 @@ private func kinds(_ o: [Outgoing]) -> [String] {
     case .meta: "meta"
     case .art: "art"
     case .state: "state"
+    case .lyrics: "lyrics"
     }
   }
 }
@@ -48,7 +49,7 @@ private func kinds(_ o: [Outgoing]) -> [String] {
   var p = SendPlanner(chunk: 500)
   _ = p.update(snap(), nowMs: 0)
   #expect(kinds(p.update(snap(pos: 61000), nowMs: 1000)) == ["state"])
-  #expect(p.update(snap(pos: 63000), nowMs: 2000).isEmpty)  // within 2 s of extrapolated 62000
+  #expect(p.update(snap(pos: 62500), nowMs: 2000).isEmpty)  // within 750 ms of extrapolated 62000
 }
 
 @Test func plannerArtOnlyForCurrentTrack() throws {
@@ -89,4 +90,53 @@ private func kinds(_ o: [Outgoing]) -> [String] {
   _ = p.update(snap(), nowMs: 0)
   _ = p.artReady(uri: "spotify:track:a", jpeg: Data(repeating: 1, count: 600))
   #expect(kinds(p.resendAll(nowMs: 100)) == ["meta", "art", "state"])
+}
+
+private let lyr = LyricsResult(kind: .synced, lines: [LyricLine(timeMs: 1000, text: "hi")])
+
+@Test func plannerLyricsReadyForCurrent() {
+  var p = SendPlanner(chunk: 500)
+  _ = p.update(snap(), nowMs: 0)
+  let out = p.lyricsReady(uri: "spotify:track:a", result: lyr)
+  #expect(kinds(out) == ["lyrics"])
+  guard case .lyrics(let parts) = out[0] else { return }
+  #expect(parts.count == 2)
+  #expect(WriteQueue.u32(parts[0], at: 1) == Wire.trackId("spotify:track:a"))
+}
+
+@Test func plannerLyricsIgnoredForOldTrack() {
+  var p = SendPlanner(chunk: 500)
+  _ = p.update(snap("spotify:track:a"), nowMs: 0)
+  _ = p.update(snap("spotify:track:b"), nowMs: 100)
+  #expect(p.lyricsReady(uri: "spotify:track:a", result: lyr).isEmpty)
+}
+
+@Test func plannerResendOrderIncludesLyrics() {
+  var p = SendPlanner(chunk: 500)
+  _ = p.update(snap(), nowMs: 0)
+  _ = p.lyricsReady(uri: "spotify:track:a", result: lyr)
+  _ = p.artReady(uri: "spotify:track:a", jpeg: Data(repeating: 1, count: 600))
+  #expect(kinds(p.resendAll(nowMs: 100)) == ["meta", "art", "lyrics", "state"])
+}
+
+@Test func plannerResendIncludesNoneKind() {
+  var p = SendPlanner(chunk: 500)
+  _ = p.update(snap(), nowMs: 0)
+  _ = p.lyricsReady(uri: "spotify:track:a", result: .none)
+  #expect(kinds(p.resendAll(nowMs: 100)) == ["meta", "lyrics", "state"])
+}
+
+@Test func plannerTrackChangeClearsLyrics() {
+  var p = SendPlanner(chunk: 500)
+  _ = p.update(snap("spotify:track:a"), nowMs: 0)
+  _ = p.lyricsReady(uri: "spotify:track:a", result: lyr)
+  _ = p.update(snap("spotify:track:b"), nowMs: 100)
+  #expect(kinds(p.resendAll(nowMs: 200)) == ["meta", "state"])
+}
+
+@Test func plannerSeek800msTriggersState() {
+  var p = SendPlanner(chunk: 500)
+  _ = p.update(snap(pos: 10000), nowMs: 0)
+  #expect(kinds(p.update(snap(pos: 11800), nowMs: 1000)) == ["state"])  // 800 ms ahead of 11000
+  #expect(p.update(snap(pos: 12300), nowMs: 2000).isEmpty)               // 500 ms off 11800+1000
 }

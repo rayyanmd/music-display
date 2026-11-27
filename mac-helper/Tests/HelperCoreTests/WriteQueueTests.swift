@@ -41,3 +41,23 @@ private func state(_ id: UInt32) -> Outgoing {
   #expect(SpotifyScripts.command(.prev).contains("previous track"))
   #expect(SpotifyScripts.command(.playPause).contains("playpause"))
 }
+
+private func lyrics(_ id: UInt32) -> Outgoing {
+  .lyrics(Wire.lyricsMessages(trackId: id, result: LyricsResult(kind: .plain, lines: [LyricLine(timeMs: 0, text: "x")]),
+                              chunk: 500))
+}
+
+@Test func queueLyricsKinds() {
+  var q = WriteQueue()
+  q.push([lyrics(9)], connected: true)
+  #expect(q.items.map(\.kind) == [.lyricsHeader, .lyricsData])
+  #expect(q.items.allSatisfy { $0.trackId == 9 })
+}
+
+@Test func queueMetaDropsOtherTrackLyrics() {
+  var q = WriteQueue()
+  q.push([lyrics(7), lyrics(8)], connected: true)
+  q.push([meta(8)], connected: true)
+  #expect(q.items.map(\.trackId) == [8, 8, 8])
+  #expect(q.items.map(\.kind) == [.lyricsHeader, .lyricsData, .meta])
+}
