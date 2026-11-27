@@ -20,7 +20,7 @@ public struct LyricsResult: Equatable, Sendable {
     self.kind = kind
     self.lines = lines
   }
-  public static let none = LyricsResult(kind: .none, lines: [])
+  public static let notFound = LyricsResult(kind: .none, lines: [])
 }
 
 /// LRC ("[mm:ss.xx]text") parsing.
@@ -175,7 +175,7 @@ public enum LyricsMatch {
   }
 
   public static func result(from t: LrclibTrack?) -> LyricsResult {
-    guard let t else { return .none }
+    guard let t else { return .notFound }
     if t.instrumental { return LyricsResult(kind: .instrumental, lines: []) }
     if let s = t.syncedLyrics {
       let l = LRC.parse(s)
@@ -185,7 +185,7 @@ public enum LyricsMatch {
       let l = LRC.plain(p)
       if !l.isEmpty { return LyricsResult(kind: .plain, lines: l) }
     }
-    return .none
+    return .notFound
   }
 
   static func hasSynced(_ t: LrclibTrack) -> Bool { !(t.syncedLyrics ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

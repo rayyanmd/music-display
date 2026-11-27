@@ -122,7 +122,7 @@ private let lyr = LyricsResult(kind: .synced, lines: [LyricLine(timeMs: 1000, te
 @Test func plannerResendIncludesNoneKind() {
   var p = SendPlanner(chunk: 500)
   _ = p.update(snap(), nowMs: 0)
-  _ = p.lyricsReady(uri: "spotify:track:a", result: .none)
+  _ = p.lyricsReady(uri: "spotify:track:a", result: .notFound)
   #expect(kinds(p.resendAll(nowMs: 100)) == ["meta", "lyrics", "state"])
 }
 

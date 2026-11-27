@@ -6,7 +6,7 @@ import HelperCore
 @MainActor final class SpotifySource {
   nonisolated static let bundleId = "com.spotify.client"
   nonisolated static let notificationName = Notification.Name("com.spotify.client.PlaybackStateChanged")
-  static let pollInterval: TimeInterval = 5
+  static let pollInterval: TimeInterval = 2
 
   var onChange: ((SpotifySnapshot?) -> Void)?
   private(set) var last: SpotifySnapshot?
