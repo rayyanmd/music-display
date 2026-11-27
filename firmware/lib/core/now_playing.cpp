@@ -58,6 +58,11 @@ void NowPlaying::onState(uint16_t conn, const proto::State& st, uint32_t nowMs) 
       s.artSeq = s.pendingArtSeq;
       s.pendingArt.reset();
     }
+    if (s.pendingLyrics && s.pendingLyrics->trackId == st.trackId) {
+      s.lyrics = std::move(s.pendingLyrics);
+      s.lyricsSeq = s.pendingLyricsSeq;
+      s.pendingLyrics.reset();
+    }
   }
   s.state = st;
   s.hasState = true;
@@ -111,6 +116,26 @@ void NowPlaying::onArt(uint16_t conn, const uint8_t* d, size_t n) {
   }
 }
 
+void NowPlaying::onLyrics(uint16_t conn, const uint8_t* d, size_t n) {
+  int i = findOrAlloc(conn);
+  if (i < 0) return;
+  Slot& s = slots_[i];
+  if (s.lyricsAsm.feed(d, n) != proto::LyricsAssembler::Result::Complete) return;
+  auto ly = std::make_shared<proto::Lyrics>();
+  ly->trackId = s.lyricsAsm.trackId();
+  ly->kind = s.lyricsAsm.kind();
+  bool ok = proto::decodeLyricsBody(s.lyricsAsm.data().data(), s.lyricsAsm.data().size(), ly->lines);
+  s.lyricsAsm.reset();
+  if (!ok) return;
+  if (s.hasState && ly->trackId == s.state.trackId) {
+    s.lyrics = std::move(ly);
+    s.lyricsSeq = ++lyricsCounter_;
+  } else {
+    s.pendingLyrics = std::move(ly);
+    s.pendingLyricsSeq = ++lyricsCounter_;
+  }
+}
+
 int NowPlaying::activeConn() const { return active_ < 0 ? -1 : slots_[active_].conn; }
 
 Snapshot NowPlaying::snapshot(uint32_t nowMs) const {
@@ -139,6 +164,10 @@ Snapshot NowPlaying::snapshot(uint32_t nowMs) const {
   if (s.art && s.artId == s.state.trackId) {
     out.art = s.art;
     out.artVersion = s.artSeq;
+  }
+  if (s.lyrics && s.lyrics->trackId == s.state.trackId) {
+    out.lyrics = s.lyrics;
+    out.lyricsVersion = s.lyricsSeq;
   }
   return out;
 }

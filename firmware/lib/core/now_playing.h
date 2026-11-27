@@ -21,6 +21,9 @@ struct Snapshot {
   // Complete JPEG for track.id, else null. Shared ownership: stays valid after the model changes.
   std::shared_ptr<const std::vector<uint8_t>> art;
   uint32_t artVersion = 0;                     // changes whenever the shown art changes (0 = none)
+  // Lyrics for track.id (any kind, including None), else null when nothing was received yet.
+  std::shared_ptr<const proto::Lyrics> lyrics;
+  uint32_t lyricsVersion = 0;                  // changes whenever the shown lyrics change (0 = none)
   uint8_t connected = 0;
 };
 
@@ -34,6 +37,7 @@ class NowPlaying {
   void onState(uint16_t conn, const proto::State& s, uint32_t nowMs);
   void onMeta(uint16_t conn, const proto::Meta& m);
   void onArt(uint16_t conn, const uint8_t* d, size_t n);
+  void onLyrics(uint16_t conn, const uint8_t* d, size_t n);
   Snapshot snapshot(uint32_t nowMs) const;
   int activeConn() const;  // conn handle commands go to, -1 if none
 
@@ -52,12 +56,18 @@ class NowPlaying {
     uint32_t pendingArtId = 0;
     std::shared_ptr<const std::vector<uint8_t>> pendingArt;
     uint32_t pendingArtSeq = 0;
+    proto::LyricsAssembler lyricsAsm;
+    std::shared_ptr<const proto::Lyrics> lyrics;         // shown (may belong to an older track)
+    uint32_t lyricsSeq = 0;
+    std::shared_ptr<const proto::Lyrics> pendingLyrics;  // for an upcoming track
+    uint32_t pendingLyricsSeq = 0;
     uint32_t receivedAtMs = 0;
   };
   Slot slots_[kSlots];
   int active_ = -1;  // slot index
   uint32_t lastSwitchMs_ = 0;
   uint32_t artCounter_ = 0;
+  uint32_t lyricsCounter_ = 0;
 
   int find(uint16_t conn) const;
   int findOrAlloc(uint16_t conn);

@@ -198,6 +198,108 @@ void test_old_track_stays_shown_until_new_state() {
   TEST_ASSERT_EQUAL(200, (int)s.art->size());
 }
 
+// ---- lyrics ----
+static void sendLyrics(NowPlaying& np, uint16_t conn, uint32_t id, uint8_t kind, int lines = 3) {
+  std::vector<uint8_t> body;
+  if (kind == 1 || kind == 2) {
+    for (int i = 0; i < lines; i++) {
+      put32(body, kind == 1 ? (uint32_t)i * 1000 : 0);
+      body.push_back(1);
+      body.push_back('a' + i);
+    }
+  }
+  std::vector<uint8_t> h{0x01};
+  put32(h, id);
+  put32(h, (uint32_t)body.size());
+  h.push_back(kind);
+  np.onLyrics(conn, h.data(), h.size());
+  if (body.empty()) return;
+  std::vector<uint8_t> d{0x02};
+  put32(d, id);
+  put32(d, 0);
+  d.insert(d.end(), body.begin(), body.end());
+  np.onLyrics(conn, d.data(), d.size());
+}
+
+void test_lyricsShownForCurrentTrack() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  sendLyrics(np, MAC, 7, 1, 3);
+  Snapshot s = np.snapshot(0);
+  TEST_ASSERT_NOT_NULL(s.lyrics.get());
+  TEST_ASSERT_EQUAL(3, s.lyrics->lines.size());
+  TEST_ASSERT_EQUAL(LyricsKind::Synced, s.lyrics->kind);
+  TEST_ASSERT_NOT_EQUAL(0, s.lyricsVersion);
+}
+
+void test_lyricsForUpcomingTrackPromotedOnState() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  sendLyrics(np, MAC, 8, 1, 2);
+  TEST_ASSERT_NULL(np.snapshot(0).lyrics.get());
+  np.onState(MAC, st(8, true, true, Source::Mac), 10);
+  Snapshot s = np.snapshot(10);
+  TEST_ASSERT_NOT_NULL(s.lyrics.get());
+  TEST_ASSERT_EQUAL_UINT32(8, s.lyrics->trackId);
+  TEST_ASSERT_EQUAL(2, s.lyrics->lines.size());
+}
+
+void test_lyricsNoneKindShown() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  sendLyrics(np, MAC, 7, 0);
+  Snapshot s = np.snapshot(0);
+  TEST_ASSERT_NOT_NULL(s.lyrics.get());
+  TEST_ASSERT_EQUAL(LyricsKind::None, s.lyrics->kind);
+  TEST_ASSERT_EQUAL(0, s.lyrics->lines.size());
+}
+
+void test_laterLyricsReplaceEarlier() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  sendLyrics(np, MAC, 7, 0);
+  uint32_t v0 = np.snapshot(0).lyricsVersion;
+  sendLyrics(np, MAC, 7, 1, 4);
+  Snapshot s = np.snapshot(0);
+  TEST_ASSERT_EQUAL(LyricsKind::Synced, s.lyrics->kind);
+  TEST_ASSERT_NOT_EQUAL(v0, s.lyricsVersion);
+}
+
+void test_lyricsNotLeakedAcrossSources() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onConnect(PHONE);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  sendLyrics(np, MAC, 7, 1);
+  np.onState(PHONE, st(9, true, true, Source::Phone), 100);
+  TEST_ASSERT_EQUAL(PHONE, np.activeConn());
+  TEST_ASSERT_NULL(np.snapshot(100).lyrics.get());
+  TEST_ASSERT_EQUAL(0, np.snapshot(100).lyricsVersion);
+}
+
+void test_lyricsMalformedBodyDropped() {
+  NowPlaying np;
+  np.onConnect(MAC);
+  np.onState(MAC, st(7, true, true, Source::Mac), 0);
+  std::vector<uint8_t> h{0x01};
+  put32(h, 7);
+  put32(h, 6);
+  h.push_back(1);
+  np.onLyrics(MAC, h.data(), h.size());
+  std::vector<uint8_t> d{0x02};
+  put32(d, 7);
+  put32(d, 0);
+  put32(d, 0);
+  d.push_back(50);  // len runs past the end
+  d.push_back('x');
+  np.onLyrics(MAC, d.data(), d.size());
+  TEST_ASSERT_NULL(np.snapshot(0).lyrics.get());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_first_playing_source_becomes_active);
@@ -212,5 +314,11 @@ int main() {
   RUN_TEST(test_remote_duplicate_never_displaces_paused_local);
   RUN_TEST(test_state_newer_than_snapshot_time_does_not_jump);
   RUN_TEST(test_old_track_stays_shown_until_new_state);
+  RUN_TEST(test_lyricsShownForCurrentTrack);
+  RUN_TEST(test_lyricsForUpcomingTrackPromotedOnState);
+  RUN_TEST(test_lyricsNoneKindShown);
+  RUN_TEST(test_laterLyricsReplaceEarlier);
+  RUN_TEST(test_lyricsNotLeakedAcrossSources);
+  RUN_TEST(test_lyricsMalformedBodyDropped);
   return UNITY_END();
 }
