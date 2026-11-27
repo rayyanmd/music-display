@@ -58,11 +58,11 @@ static void loadDemo() {
 }
 #endif
 
-static layout::Button pollTap(uint32_t now) {
+static layout::Action pollTap(uint32_t now) {
   static TapDetector tap;
   int32_t x, y;
   bool down = tft.getTouch(&x, &y);
-  return tap.update(down, now) ? layout::toButton(layout::hitTest(layout::View::Main, x, y)) : layout::Button::None;
+  return tap.update(down, now) ? layout::hitTest(ui.view(), x, y) : layout::Action::None;
 }
 
 void setup() {
@@ -90,7 +90,16 @@ static proto::Cmd toCmd(layout::Button b) {
 
 void loop() {
   uint32_t now = millis();
-  layout::Button b = pollTap(now);
+  layout::Action a = pollTap(now);
+  if (a == layout::Action::ToggleView) {
+    bool active;
+    {
+      std::lock_guard<std::mutex> g(modelLock);
+      active = model.snapshot(now).hasActive;
+    }
+    if (active) ui.toggleView();  // a view toggle never sends a command
+  }
+  layout::Button b = layout::toButton(a);
   if (b != layout::Button::None) {
     Serial.printf("tap %d\n", static_cast<int>(b));
     ui.flashButton(b);

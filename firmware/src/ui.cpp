@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "lyrics.h"
 
 using namespace layout;
 
@@ -14,6 +15,17 @@ const lgfx::IFont* kFontBody = &fonts::efontJA_12;
 constexpr float kMarqueePxPerS = 30.0f;
 constexpr uint32_t kMarqueePauseMs = 1000;
 constexpr uint32_t kFlashMs = 150;
+constexpr uint16_t kDimmer = 0x632C;
+constexpr uint32_t kLyricsWaitMs = 10000;   // "Looking for lyrics…" before giving up
+constexpr uint32_t kSlideMs = 150;
+constexpr int kRowSmall = 20;              // row height for 12 px lines
+constexpr int kRowBig = 22;                // row height for 16 px current line
+constexpr int kPlainVisible = 6;
+
+const char* lineOrNote(const std::string& t) { return t.empty() ? "\u266A" : t.c_str(); }
+
+// Byte length of the UTF-8 sequence starting with lead byte c.
+size_t u8len(unsigned char c) { return c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 1; }
 
 const char* sourceLabel(proto::Source s) {
   switch (s) {
@@ -36,6 +48,8 @@ void Ui::begin(LGFX& tft) {
   frame_.pushSprite(tft_, 0, 0);
 }
 
+void Ui::toggleView() { view_ = view_ == View::Main ? View::Lyrics : View::Main; }
+
 void Ui::flashButton(Button b) {
   flash_ = b;
   flashPending_ = true;
@@ -55,13 +69,16 @@ void Ui::render(const Snapshot& s, uint32_t nowMs) {
 
   frame_.fillScreen(kBg);
   if (!s.hasActive) {
+    view_ = View::Main;
     drawIdle(s);
+  } else if (view_ == View::Lyrics) {
+    drawLyricsView(s, nowMs);
   } else {
     drawStatus(s);
     drawArt(s);
     drawText(s, nowMs);
     drawProgress(s);
-    drawButtons(s, nowMs);
+    drawButtons(s, nowMs, kPrev, kPlay, kNext);
   }
   frame_.pushSprite(tft_, 0, 0);
 }
@@ -136,26 +153,26 @@ void Ui::drawProgress(const Snapshot& s) {
   frame_.drawString(formatTime(s.track.durationMs).c_str(), kTimes.x + kTimes.w, kTimes.y);
 }
 
-void Ui::drawButtons(const Snapshot& s, uint32_t nowMs) {
+void Ui::drawButtons(const Snapshot& s, uint32_t nowMs, const Rect& rPrev, const Rect& rPlay, const Rect& rNext) {
   bool flashing = (int32_t)(flashUntilMs_ - nowMs) > 0;
   auto bg = [&](const Rect& r, Button b) {
-    if (flashing && flash_ == b) frame_.fillRoundRect(r.x, r.y + 4, r.w, r.h - 8, 8, kPress);
+    if (flashing && flash_ == b) frame_.fillRoundRect(r.x, r.y + 2, r.w, r.h - 4, 8, kPress);
   };
-  bg(kPrev, Button::Prev);
-  bg(kPlay, Button::PlayPause);
-  bg(kNext, Button::Next);
+  bg(rPrev, Button::Prev);
+  bg(rPlay, Button::PlayPause);
+  bg(rNext, Button::Next);
 
   // prev: bar + left triangle
-  int cy = kPrev.y + kPrev.h / 2;
-  int px = kPrev.x + kPrev.w / 2;
+  int cy = rPrev.y + rPrev.h / 2;
+  int px = rPrev.x + rPrev.w / 2;
   frame_.fillRect(px - 9, cy - 8, 3, 16, kFg);
   frame_.fillTriangle(px + 8, cy - 8, px + 8, cy + 8, px - 5, cy, kFg);
   // next: right triangle + bar
-  int nx = kNext.x + kNext.w / 2;
+  int nx = rNext.x + rNext.w / 2;
   frame_.fillTriangle(nx - 8, cy - 8, nx - 8, cy + 8, nx + 5, cy, kFg);
   frame_.fillRect(nx + 6, cy - 8, 3, 16, kFg);
   // play/pause in a green circle
-  int cx = kPlay.x + kPlay.w / 2;
+  int cx = rPlay.x + rPlay.w / 2;
   frame_.fillCircle(cx, cy, 17, kAccent);
   if (s.playing) {
     frame_.fillRect(cx - 6, cy - 7, 4, 14, kBg);
@@ -173,4 +190,146 @@ void Ui::drawIdle(const Snapshot& s) {
   frame_.setFont(kFontBody);
   frame_.setTextColor(kDim);
   frame_.drawString(s.connected ? "Connected - start Spotify" : "Waiting for Mac or phone", kScreenW / 2, kScreenH / 2 + 14);
+}
+
+// ---------------- lyrics screen ----------------
+
+void Ui::drawCentered(const char* msg, const lgfx::IFont* font, uint16_t color) {
+  frame_.setFont(font);
+  frame_.setTextDatum(lgfx::middle_center);
+  frame_.setTextColor(color);
+  frame_.drawString(msg, kLyrics.x + kLyrics.w / 2, kLyrics.y + kLyrics.h / 2);
+}
+
+std::vector<std::string> Ui::wrapText(const std::string& text, const lgfx::IFont* font, int width, int maxRows) {
+  frame_.setFont(font);
+  std::vector<std::string> rows;
+  size_t start = 0;
+  while (start < text.size() && (int)rows.size() < maxRows) {
+    if ((int)rows.size() == maxRows - 1) {  // last row takes the rest (clipped when drawn)
+      rows.push_back(text.substr(start));
+      break;
+    }
+    size_t i = start, lastSpace = std::string::npos, fit = start;
+    while (i < text.size()) {
+      size_t n = u8len((unsigned char)text[i]);
+      size_t end = std::min(text.size(), i + n);
+      if (frame_.textWidth(text.substr(start, end - start).c_str()) > width) break;
+      if (text[i] == ' ') lastSpace = i;
+      fit = end;
+      i = end;
+    }
+    if (fit >= text.size()) {
+      rows.push_back(text.substr(start));
+      break;
+    }
+    size_t cut = (lastSpace != std::string::npos && lastSpace > start) ? lastSpace : fit;
+    if (cut == start) cut = start + u8len((unsigned char)text[start]);  // a single glyph wider than the row
+    rows.push_back(text.substr(start, cut - start));
+    start = cut;
+    while (start < text.size() && text[start] == ' ') start++;
+  }
+  return rows;
+}
+
+void Ui::drawLyricsView(const Snapshot& s, uint32_t nowMs) {
+  drawStatus(s);
+  const auto& ly = s.lyrics;
+  if (ly && ly->kind == proto::LyricsKind::Plain) {
+    frame_.setFont(kFontBody);
+    frame_.setTextDatum(lgfx::middle_right);
+    frame_.setTextColor(kDimmer);
+    frame_.drawString("unsynced", kScreenW - 14 - s.connected * 10, kStatus.h / 2);
+  }
+
+  frame_.setClipRect(kLyrics.x, kLyrics.y, kLyrics.w, kLyrics.h);
+  if (!ly) {
+    bool waiting = nowMs - trackSinceMs_ < kLyricsWaitMs;
+    drawCentered(waiting ? "Looking for lyrics\u2026" : "No lyrics for this song", kFontBody, kDim);
+  } else if (ly->kind == proto::LyricsKind::Instrumental) {
+    drawCentered("\u266A Instrumental", kFontTitle, kDim);
+  } else if (ly->kind == proto::LyricsKind::None || ly->lines.empty()) {
+    drawCentered("No lyrics for this song", kFontBody, kDim);
+  } else if (ly->kind == proto::LyricsKind::Plain) {
+    drawPlain(s);
+  } else {
+    drawSynced(s, nowMs);
+  }
+  frame_.clearClipRect();
+
+  // bottom strip: progress, title, times, buttons
+  frame_.fillRoundRect(kLProgress.x, kLProgress.y, kLProgress.w, kLProgress.h, 2, kTrack);
+  int w = progressWidth(s.positionMs, s.track.durationMs, kLProgress.w);
+  if (w > 0) frame_.fillRoundRect(kLProgress.x, kLProgress.y, w, kLProgress.h, 2, s.playing ? kAccent : kDim);
+  std::string info = s.track.title.empty() ? std::string("\u2014") : s.track.title;
+  if (!s.track.artist.empty()) info += " \u2014 " + s.track.artist;
+  marquee(info, kLInfo, kFontBody, kFg, nowMs - trackSinceMs_);
+  std::string times = formatTime(s.positionMs) + " / " + formatTime(s.track.durationMs);
+  frame_.setFont(kFontBody);
+  frame_.setTextDatum(lgfx::top_left);
+  frame_.setTextColor(kDim);
+  frame_.drawString(times.c_str(), kLTimes.x, kLTimes.y);
+  drawButtons(s, nowMs, kLPrev, kLPlay, kLNext);
+}
+
+void Ui::drawSynced(const Snapshot& s, uint32_t nowMs) {
+  const auto& lines = s.lyrics->lines;
+  int cur = lyrics::currentLine(lines, s.positionMs);
+  if (s.lyricsVersion != lyricsVersion_) {
+    lyricsVersion_ = s.lyricsVersion;
+    lyricCur_ = cur;
+    lyricChangeMs_ = nowMs - kSlideMs;  // no slide when lyrics first appear
+  } else if (cur != lyricCur_) {
+    // Slide only for the normal one-line advance; jumps (seeks) snap.
+    lyricChangeMs_ = (cur == lyricCur_ + 1) ? nowMs : nowMs - kSlideMs;
+    lyricCur_ = cur;
+  }
+  uint32_t since = nowMs - lyricChangeMs_;
+  int slide = since >= kSlideMs ? 0 : (int)((kSlideMs - since) * kRowBig / kSlideMs);
+
+  if (wrapIdx_ != cur || wrapVersion_ != s.lyricsVersion) {
+    wrapIdx_ = cur;
+    wrapVersion_ = s.lyricsVersion;
+    wrap_ = wrapText(cur < 0 ? std::string("\u266A") : std::string(lineOrNote(lines[cur].text)), kFontTitle,
+                     kLyrics.w, 2);
+  }
+
+  const int x = kLyrics.x;
+  int y = kLyrics.y + 8 + slide;
+  frame_.setTextDatum(lgfx::top_left);
+  // previous line
+  frame_.setFont(kFontBody);
+  frame_.setTextColor(kDimmer);
+  if (cur >= 1) frame_.drawString(lineOrNote(lines[cur - 1].text), x, y);
+  y += kRowSmall + 4;
+  // current line (up to 2 rows)
+  frame_.setFont(kFontTitle);
+  frame_.setTextColor(kFg);
+  for (const std::string& row : wrap_) {
+    frame_.drawString(row.c_str(), x, y);
+    y += kRowBig;
+  }
+  y += 4;
+  // next lines
+  frame_.setFont(kFontBody);
+  for (int k = 1; k <= 3; k++) {
+    int i = cur + k;
+    if (i < 0 || i >= (int)lines.size()) break;
+    frame_.setTextColor(k == 1 ? kDim : kDimmer);
+    frame_.drawString(lineOrNote(lines[i].text), x, y);
+    y += kRowSmall;
+  }
+}
+
+void Ui::drawPlain(const Snapshot& s) {
+  const auto& lines = s.lyrics->lines;
+  int top = lyrics::plainTopLine(lines.size(), s.positionMs, s.track.durationMs, kPlainVisible);
+  frame_.setFont(kFontBody);
+  frame_.setTextDatum(lgfx::top_left);
+  frame_.setTextColor(kDim);
+  int y = kLyrics.y + 6;
+  for (int i = top; i < (int)lines.size() && i < top + kPlainVisible + 1; i++) {
+    frame_.drawString(lineOrNote(lines[i].text), kLyrics.x, y);
+    y += kRowSmall + 2;
+  }
 }

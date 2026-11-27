@@ -10,6 +10,7 @@ const char* kMetaUuid = "6e0a0002-7b5d-4c1e-9f3a-2d8c5b1e4a70";
 const char* kArtUuid = "6e0a0003-7b5d-4c1e-9f3a-2d8c5b1e4a70";
 const char* kCmdUuid = "6e0a0004-7b5d-4c1e-9f3a-2d8c5b1e4a70";
 const char* kInfoUuid = "6e0a0005-7b5d-4c1e-9f3a-2d8c5b1e4a70";
+const char* kLyricsUuid = "6e0a0006-7b5d-4c1e-9f3a-2d8c5b1e4a70";
 constexpr uint8_t kProtoVer = 1;
 
 NowPlaying* gModel = nullptr;
@@ -37,7 +38,7 @@ class ServerCb : public NimBLEServerCallbacks {
   }
 };
 
-enum class Kind { State, Meta, Art };
+enum class Kind { State, Meta, Art, Lyrics };
 
 class WriteCb : public NimBLECharacteristicCallbacks {
  public:
@@ -64,6 +65,9 @@ class WriteCb : public NimBLECharacteristicCallbacks {
       case Kind::Art:
         gModel->onArt(conn, d, n);
         break;
+      case Kind::Lyrics:
+        gModel->onLyrics(conn, d, n);
+        break;
     }
   }
 
@@ -72,7 +76,7 @@ class WriteCb : public NimBLECharacteristicCallbacks {
 };
 
 ServerCb gServerCb;
-WriteCb gStateCb(Kind::State), gMetaCb(Kind::Meta), gArtCb(Kind::Art);
+WriteCb gStateCb(Kind::State), gMetaCb(Kind::Meta), gArtCb(Kind::Art), gLyricsCb(Kind::Lyrics);
 
 void updateInfo() {
   if (!gInfo) return;
@@ -101,6 +105,8 @@ void BleService::begin(NowPlaying& model, std::mutex& lock) {
   svc->createCharacteristic(kMetaUuid, NIMBLE_PROPERTY::WRITE, proto::kMaxMeta)->setCallbacks(&gMetaCb);
   svc->createCharacteristic(kArtUuid, NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE, 512)
       ->setCallbacks(&gArtCb);
+  svc->createCharacteristic(kLyricsUuid, NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE, 512)
+      ->setCallbacks(&gLyricsCb);
   gCmd = svc->createCharacteristic(kCmdUuid, NIMBLE_PROPERTY::NOTIFY, 1);
   gInfo = svc->createCharacteristic(kInfoUuid, NIMBLE_PROPERTY::READ, 2);
   updateInfo();
